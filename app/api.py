@@ -40,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await call_next(request)
 
     @app.exception_handler(SQLAlchemyError)
+    @app.exception_handler(OSError)
     async def database_unavailable(request: Request, exc: SQLAlchemyError):
         logger.error("Database request failed: %s", type(exc).__name__)
         return JSONResponse({"detail": "Database temporarily unavailable"}, status_code=503)

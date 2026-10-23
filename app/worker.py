@@ -30,7 +30,6 @@ WORK_QUEUE = RabbitQueue(
         "x-dead-letter-routing-key": "payments.dlq",
         "x-dead-letter-strategy": "at-least-once",
         "x-overflow": "reject-publish",
-        "x-delivery-limit": -1,
     },
 )
 
@@ -106,23 +105,27 @@ def create_worker(settings: Settings | None = None) -> FastStream:
         except (KeyError, TypeError, ValueError, AttributeError):
             await message.reject()
             return
-        try:
+        delay = 1
+        while True:
             try:
-                await process_event(sessions, event_id, client)
-            except (InvalidEvent, SQLAlchemyError):
-                raise
-            except Exception as exc:
-                logger.error("Processing event %s failed: %s", event_id, type(exc).__name__)
-                await record_failure(sessions, event_id, type(exc).__name__)
-        except InvalidEvent:
-            await message.reject()
-        except SQLAlchemyError as exc:
-            # No durable decision can be made without the DB; keep the original delivery.
-            logger.error("Database unavailable for event %s: %s", event_id, type(exc).__name__)
-            await asyncio.sleep(1)
-            await message.nack(requeue=True)
-        else:
-            await message.ack()
+                try:
+                    await process_event(sessions, event_id, client)
+                except (InvalidEvent, SQLAlchemyError, OSError):
+                    raise
+                except Exception as exc:
+                    logger.error("Processing event %s failed: %s", event_id, type(exc).__name__)
+                    await record_failure(sessions, event_id, type(exc).__name__)
+            except InvalidEvent:
+                await message.reject()
+                return
+            except (SQLAlchemyError, OSError) as exc:
+                # Hold the unacked delivery until DB recovery; requeue loops exhaust broker limits.
+                logger.error("Database unavailable for event %s: %s", event_id, type(exc).__name__)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 10)
+            else:
+                await message.ack()
+                return
 
     @app.after_startup
     async def start_relay():
