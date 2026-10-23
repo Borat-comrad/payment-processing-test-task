@@ -5,3 +5,9 @@ __pycache__/
 *.egg-info/
 .env
 tmp/
+
+# Local analysis and verification materials are not part of the submission.
+/PLAN.md
+/задание.pdf
+/tests/
+/pyproject.toml
